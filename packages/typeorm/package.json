@@ -115,6 +115,12 @@
     "@types/sinon-chai": "^4.0.0",
     "@types/source-map-support": "^0.5.10",
     "@types/yargs": "^17.0.35",
+    "@ydbjs/api": "^6.0.7",
+    "@ydbjs/auth": "^6.3.1",
+    "@ydbjs/core": "^6.3.1",
+    "@ydbjs/error": "^6.0.6",
+    "@ydbjs/query": "^6.3.0",
+    "@ydbjs/value": "^6.0.8",
     "better-sqlite3": "^12.11.1",
     "c8": "^11.0.0",
     "chai": "^6.2.2",
@@ -146,6 +152,12 @@
   "peerDependencies": {
     "@google-cloud/spanner": "^8.0.0",
     "@sap/hana-client": "^2.14.22",
+    "@ydbjs/api": "^6.0.7",
+    "@ydbjs/auth": "^6.3.1",
+    "@ydbjs/core": "^6.3.1",
+    "@ydbjs/error": "^6.0.6",
+    "@ydbjs/query": "^6.3.0",
+    "@ydbjs/value": "^6.0.8",
     "better-sqlite3": "^12.0.0",
     "ioredis": "^5.0.4",
     "mongodb": "^7.0.0",
@@ -165,6 +177,24 @@
       "optional": true
     },
     "@sap/hana-client": {
+      "optional": true
+    },
+    "@ydbjs/api": {
+      "optional": true
+    },
+    "@ydbjs/auth": {
+      "optional": true
+    },
+    "@ydbjs/core": {
+      "optional": true
+    },
+    "@ydbjs/error": {
+      "optional": true
+    },
+    "@ydbjs/query": {
+      "optional": true
+    },
+    "@ydbjs/value": {
       "optional": true
     },
     "better-sqlite3": {

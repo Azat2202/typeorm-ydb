@@ -12,6 +12,11 @@
     "noImplicitReturns": true,
     "noUnusedLocals": true,
     "outDir": "build/compiled",
+    "paths": {
+      "@ydbjs/api/*": ["./node_modules/@ydbjs/api/dist/*"],
+      "@ydbjs/auth/*": ["./node_modules/@ydbjs/auth/dist/*"],
+      "@ydbjs/value/*": ["./node_modules/@ydbjs/value/dist/*"]
+    },
     "pretty": true,
     "resolveJsonModule": true,
     "sourceMap": true,

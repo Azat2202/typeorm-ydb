@@ -122,6 +122,13 @@
   },
   {
     "skip": false,
+    "disabledIfNotEnabledImplicitly": true,
+    "type": "ydb",
+    "connectionString": "grpc://localhost:2136/local",
+    "logging": false
+  },
+  {
+    "skip": false,
     "type": "sqljs",
     "logging": false
   }
