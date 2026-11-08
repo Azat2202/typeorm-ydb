@@ -78,6 +78,7 @@ export class PlatformTools {
             "@ydbjs/auth/metadata",
             "@ydbjs/auth/static",
             "@ydbjs/value",
+            "@ydbjs/value/list",
             "@ydbjs/value/optional",
             "@ydbjs/value/primitive",
             "@ydbjs/error",

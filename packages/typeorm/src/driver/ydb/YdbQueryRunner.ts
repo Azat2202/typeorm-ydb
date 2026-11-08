@@ -1,5 +1,8 @@
+import type { QueryStats } from "@ydbjs/api/query"
+import type { YDBError } from "@ydbjs/error"
 import type { QueryClient } from "@ydbjs/query"
 import type { ObjectLiteral } from "../../common/ObjectLiteral"
+import { NamedPlaceholdersNotSupportedError } from "../../error/NamedPlaceholdersNotSupportedError"
 import { QueryFailedError } from "../../error/QueryFailedError"
 import { QueryRunnerAlreadyReleasedError } from "../../error/QueryRunnerAlreadyReleasedError"
 import { TypeORMError } from "../../error/TypeORMError"
@@ -10,9 +13,11 @@ import type { QueryRunner } from "../../query-runner/QueryRunner"
 import type { Table } from "../../schema-builder/table/Table"
 import type { View } from "../../schema-builder/view/View"
 import { Broadcaster } from "../../subscriber/Broadcaster"
+import { BroadcasterResult } from "../../subscriber/BroadcasterResult"
 import type { ReplicationMode } from "../types/ReplicationMode"
 import type { YdbDriver } from "./YdbDriver"
 import { YdbNotImplementedError } from "./YdbNotImplementedError"
+import { toYdbValue } from "./YdbParameters"
 
 /**
  * Runs queries on a YDB database.
@@ -76,29 +81,73 @@ export class YdbQueryRunner extends BaseQueryRunner implements QueryRunner {
         useStructuredResult: boolean = false,
     ): Promise<any> {
         if (this.isReleased) throw new QueryRunnerAlreadyReleasedError()
-        if (parameters && Object.keys(parameters).length > 0)
-            throw new YdbNotImplementedError("query parameters")
+        if (parameters && !Array.isArray(parameters))
+            throw new NamedPlaceholdersNotSupportedError()
 
         const client = await this.connect()
+        const ydbQuery = this.createYdbQuery(client, query, parameters ?? [])
 
         this.driver.dataSource.logger.logQuery(query, parameters, this)
+        await this.broadcaster.broadcast("BeforeQuery", query, parameters)
+
+        const broadcasterResult = new BroadcasterResult()
 
         try {
-            const resultSets: any[][] = await client(query)
+            const queryStartTime = Date.now()
+            const resultSets: any[][] = await ydbQuery
+            const queryExecutionTime = Date.now() - queryStartTime
+
+            // log slow queries if maxQueryExecution time is set
+            const maxQueryExecutionTime =
+                this.driver.options.maxQueryExecutionTime
+            if (
+                maxQueryExecutionTime &&
+                queryExecutionTime > maxQueryExecutionTime
+            )
+                this.driver.dataSource.logger.logQuerySlow(
+                    queryExecutionTime,
+                    query,
+                    parameters,
+                    this,
+                )
+
+            this.broadcaster.broadcastAfterQueryEvent(
+                broadcasterResult,
+                query,
+                parameters,
+                true,
+                queryExecutionTime,
+                resultSets,
+                undefined,
+            )
 
             const result = new QueryResult()
             result.raw = resultSets
             result.records = resultSets[0] ?? []
+            result.affected = this.countAffectedRows(ydbQuery.stats())
 
             return useStructuredResult ? result : result.records
         } catch (err) {
+            const driverError = this.findYdbError(err) ?? err
+
             this.driver.dataSource.logger.logQueryError(
-                err,
+                driverError,
                 query,
                 parameters,
                 this,
             )
-            throw new QueryFailedError(query, parameters, err)
+            this.broadcaster.broadcastAfterQueryEvent(
+                broadcasterResult,
+                query,
+                parameters,
+                false,
+                undefined,
+                undefined,
+                driverError,
+            )
+            throw new QueryFailedError(query, parameters, driverError)
+        } finally {
+            await broadcasterResult.wait()
         }
     }
 
@@ -325,6 +374,90 @@ export class YdbQueryRunner extends BaseQueryRunner implements QueryRunner {
     // -------------------------------------------------------------------------
     // Protected Methods
     // -------------------------------------------------------------------------
+
+    /**
+     * Creates a YDB query with typed parameters.
+     * Null parameters are inlined as `NULL`, because YDB rejects untyped nulls.
+     *
+     * @param client
+     * @param query
+     * @param parameters
+     */
+    protected createYdbQuery(
+        client: QueryClient,
+        query: string,
+        parameters: any[],
+    ) {
+        const prefix = this.driver.parametersPrefix
+        const text = query.replaceAll(
+            /\$p(\d+)(?![0-9A-Za-z_])/g,
+            (full, index: string) => {
+                const value = parameters[Number(index)]
+                return value === null || value === undefined ? "NULL" : full
+            },
+        )
+
+        const ydbQuery = client(text).withStats(this.driver.ydbStatsMode.BASIC)
+        parameters.forEach((value, index) => {
+            if (value === null || value === undefined) return
+            ydbQuery.parameter(
+                prefix.slice(1) + index,
+                toYdbValue(value, this.driver.ydbValueModules),
+            )
+        })
+
+        return ydbQuery
+    }
+
+    /**
+     * Counts rows written and deleted by the query.
+     *
+     * @param stats
+     */
+    protected countAffectedRows(stats: QueryStats | undefined): number {
+        let affected = 0n
+        for (const phase of stats?.queryPhases ?? []) {
+            for (const table of phase.tableAccess) {
+                affected +=
+                    (table.updates?.rows ?? 0n) + (table.deletes?.rows ?? 0n)
+            }
+        }
+        return Number(affected)
+    }
+
+    /**
+     * Finds a YDB error in the cause chain and adds nested issues to its message.
+     * By default the message contains only the top level issues, which are often not informative.
+     *
+     * @param error
+     */
+    protected findYdbError(error: unknown): YDBError | undefined {
+        for (let current: any = error; current; current = current.cause) {
+            if (current instanceof this.driver.ydbError.YDBError) {
+                const details = this.describeIssues(current.issues)
+                if (details && !current.message.includes(details))
+                    current.message += `: ${details}`
+                return current
+            }
+        }
+
+        return undefined
+    }
+
+    /**
+     * Joins nested issue messages, e.g. "Type annotation / At function: KiWriteTable! / Failed to convert".
+     *
+     * @param issues
+     */
+    protected describeIssues(issues: any[] | undefined): string {
+        return (issues ?? [])
+            .map((issue) =>
+                [issue.message, this.describeIssues(issue.issues)]
+                    .filter(Boolean)
+                    .join(" / "),
+            )
+            .join("; ")
+    }
 
     protected async loadTables(): Promise<Table[]> {
         throw new YdbNotImplementedError("loadTables")

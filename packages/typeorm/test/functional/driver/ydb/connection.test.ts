@@ -82,9 +82,6 @@ describe("driver > ydb > connection", () => {
                         YdbNotImplementedError,
                         "createTable is not implemented yet",
                     )
-                    await expect(
-                        queryRunner.query("SELECT $p0", [1]),
-                    ).to.be.rejectedWith(YdbNotImplementedError)
                 } finally {
                     await queryRunner.release()
                 }

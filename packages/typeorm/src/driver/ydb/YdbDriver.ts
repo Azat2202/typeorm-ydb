@@ -23,6 +23,7 @@ import type { ReplicationMode } from "../types/ReplicationMode"
 import type { UpsertType } from "../types/UpsertType"
 import type { YdbDataSourceOptions } from "./YdbDataSourceOptions"
 import { YdbNotImplementedError } from "./YdbNotImplementedError"
+import type { YdbValueModules } from "./YdbParameters"
 import { YdbQueryRunner } from "./YdbQueryRunner"
 
 /**
@@ -61,6 +62,21 @@ export class YdbDriver implements Driver {
      * `@ydbjs/query` module.
      */
     ydbQuery: any
+
+    /**
+     * `@ydbjs/value` modules used to build query parameters.
+     */
+    ydbValueModules: YdbValueModules
+
+    /**
+     * `StatsMode` enum of `@ydbjs/api/query`.
+     */
+    ydbStatsMode: any
+
+    /**
+     * `@ydbjs/error` module.
+     */
+    ydbError: any
 
     /**
      * YDB SDK driver. Set while the data source is connected.
@@ -269,9 +285,82 @@ export class YdbDriver implements Driver {
     /**
      * Replaces parameters in the given sql with special escaping character
      * and an array of parameter names to be passed to a query.
+     *
+     * Null values are never sent as parameters, because YDB rejects untyped nulls:
+     * "= :key" becomes "IS NULL", "!= :key" becomes "IS NOT NULL", otherwise "NULL" is inlined.
+     *
+     * @param sql
+     * @param parameters
      */
-    escapeQueryWithParameters(): [string, any[]] {
-        throw new YdbNotImplementedError("escapeQueryWithParameters")
+    escapeQueryWithParameters(
+        sql: string,
+        parameters: ObjectLiteral,
+    ): [string, any[]] {
+        const escapedParameters: any[] = []
+        if (!parameters || !Object.keys(parameters).length)
+            return [sql, escapedParameters]
+
+        const isNullParameter = (key: string) =>
+            Object.hasOwn(parameters, key) &&
+            (parameters[key] === null || parameters[key] === undefined)
+
+        sql = sql
+            .replaceAll(
+                /\s*(?:!=|<>)\s*:([A-Za-z0-9_.]+)/g,
+                (full, key: string) =>
+                    isNullParameter(key) ? " IS NOT NULL" : full,
+            )
+            .replaceAll(
+                /(?<![!<>=])\s*=\s*:([A-Za-z0-9_.]+)/g,
+                (full, key: string) =>
+                    isNullParameter(key) ? " IS NULL" : full,
+            )
+
+        const parameterIndexMap = new Map<string, number>()
+        sql = sql.replaceAll(
+            /:(\.\.\.)?([A-Za-z0-9_.]+)/g,
+            (full, isArray: string, key: string): string => {
+                if (!Object.hasOwn(parameters, key)) {
+                    return full
+                }
+
+                if (parameterIndexMap.has(key)) {
+                    return this.createParameter(
+                        key,
+                        parameterIndexMap.get(key)!,
+                    )
+                }
+
+                const value: any = parameters[key]
+
+                if (value === null || value === undefined) {
+                    return "NULL"
+                }
+
+                if (isArray) {
+                    return value
+                        .map((v: any) => {
+                            if (v === null || v === undefined) return "NULL"
+                            escapedParameters.push(v)
+                            return this.createParameter(
+                                key,
+                                escapedParameters.length - 1,
+                            )
+                        })
+                        .join(", ")
+                }
+
+                if (typeof value === "function") {
+                    return value()
+                }
+
+                escapedParameters.push(value)
+                parameterIndexMap.set(key, escapedParameters.length - 1)
+                return this.createParameter(key, escapedParameters.length - 1)
+            },
+        )
+
+        return [sql, escapedParameters]
     }
 
     /**
@@ -456,9 +545,12 @@ export class YdbDriver implements Driver {
 
     /**
      * Creates an escaped parameter.
+     *
+     * @param _parameterName
+     * @param index
      */
-    createParameter(): string {
-        throw new YdbNotImplementedError("createParameter")
+    createParameter(_parameterName: string, index: number): string {
+        return this.parametersPrefix + index
     }
 
     // -------------------------------------------------------------------------
@@ -556,6 +648,13 @@ export class YdbDriver implements Driver {
         try {
             this.ydbCore = PlatformTools.load("@ydbjs/core")
             this.ydbQuery = PlatformTools.load("@ydbjs/query")
+            this.ydbValueModules = {
+                value: PlatformTools.load("@ydbjs/value"),
+                primitive: PlatformTools.load("@ydbjs/value/primitive"),
+                list: PlatformTools.load("@ydbjs/value/list"),
+            }
+            this.ydbStatsMode = PlatformTools.load("@ydbjs/api/query").StatsMode
+            this.ydbError = PlatformTools.load("@ydbjs/error")
         } catch {
             throw new DriverPackageNotInstalledError(
                 "YDB",
