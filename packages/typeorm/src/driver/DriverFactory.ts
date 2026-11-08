@@ -18,6 +18,7 @@ import { SapDriver } from "./sap/SapDriver"
 import { SpannerDriver } from "./spanner/SpannerDriver"
 import { SqljsDriver } from "./sqljs/SqljsDriver"
 import { SqlServerDriver } from "./sqlserver/SqlServerDriver"
+import { YdbDriver } from "./ydb/YdbDriver"
 
 /**
  * Helps to create drivers.
@@ -68,6 +69,8 @@ export class DriverFactory {
                 return new SpannerDriver(dataSource)
             case "sqljs":
                 return new SqljsDriver(dataSource)
+            case "ydb":
+                return new YdbDriver(dataSource)
             default:
                 throw new MissingDriverError(type, [
                     "aurora-mysql",
@@ -88,6 +91,7 @@ export class DriverFactory {
                     "sap",
                     "spanner",
                     "sqljs",
+                    "ydb",
                 ])
         }
     }

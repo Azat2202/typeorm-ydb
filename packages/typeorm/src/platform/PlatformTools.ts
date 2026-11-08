@@ -69,6 +69,21 @@ export class PlatformTools {
             // redis
             "redis",
             "ioredis",
+            // YDB
+            "@ydbjs/core",
+            "@ydbjs/query",
+            "@ydbjs/auth",
+            "@ydbjs/auth/access-token",
+            "@ydbjs/auth/anonymous",
+            "@ydbjs/auth/metadata",
+            "@ydbjs/auth/static",
+            "@ydbjs/value",
+            "@ydbjs/value/optional",
+            "@ydbjs/value/primitive",
+            "@ydbjs/error",
+            "@ydbjs/api/query",
+            "@ydbjs/api/scheme",
+            "@ydbjs/api/table",
         ]
 
         if (!KNOWN_MODULES.includes(name)) {

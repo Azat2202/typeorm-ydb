@@ -136,6 +136,7 @@ services:
     image: "ydbplatform/local-ydb:26.2.1.14"
     container_name: "typeorm-ydb"
     platform: linux/amd64
+    hostname: localhost
     ports:
       - "2136:2136"
       - "8765:8765"
