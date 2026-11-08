@@ -7,6 +7,7 @@ import type { MysqlDriver } from "../driver/mysql/MysqlDriver"
 import type { ReactNativeDriver } from "../driver/react-native/ReactNativeDriver"
 import type { AbstractSqliteDriver } from "../driver/sqlite-abstract/AbstractSqliteDriver"
 import type { SqlServerDriver } from "../driver/sqlserver/SqlServerDriver"
+import type { YdbDriver } from "../driver/ydb/YdbDriver"
 import { TypeORMError } from "../error"
 import { EntityNotFoundError } from "../error/EntityNotFoundError"
 import { EntityPropertyNotFoundError } from "../error/EntityPropertyNotFoundError"
@@ -4434,10 +4435,14 @@ export class SelectQueryBuilder<Entity extends ObjectLiteral>
                         )
                     }
 
-                    // MSSQL requires parameters to carry extra type information
+                    // MSSQL and YDB require parameters to carry extra type information
                     if (this.dataSource.driver.options.type === "mssql") {
                         parameterValue = (
                             this.dataSource.driver as SqlServerDriver
+                        ).parametrizeValues(column, parameterValue)
+                    } else if (this.dataSource.driver.options.type === "ydb") {
+                        parameterValue = (
+                            this.dataSource.driver as YdbDriver
                         ).parametrizeValues(column, parameterValue)
                     }
 

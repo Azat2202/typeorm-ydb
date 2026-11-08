@@ -6,12 +6,16 @@ import type { DataSource } from "../../data-source"
 import { DriverPackageNotInstalledError } from "../../error/DriverPackageNotInstalledError"
 import { TypeORMError } from "../../error/TypeORMError"
 import type { ColumnMetadata } from "../../metadata/ColumnMetadata"
+import { FindOperator } from "../../find-options/FindOperator"
 import { EntityMetadata } from "../../metadata/EntityMetadata"
 import { PlatformTools } from "../../platform/PlatformTools"
 import { RdbmsSchemaBuilder } from "../../schema-builder/RdbmsSchemaBuilder"
 import { Table } from "../../schema-builder/table/Table"
+import type { TableColumn } from "../../schema-builder/table/TableColumn"
 import { TableForeignKey } from "../../schema-builder/table/TableForeignKey"
 import { View } from "../../schema-builder/view/View"
+import { ApplyValueTransformers } from "../../util/ApplyValueTransformers"
+import { DateUtils } from "../../util/DateUtils"
 import type { Driver } from "../Driver"
 import type { ColumnType } from "../types/ColumnTypes"
 import type { CteCapabilities } from "../types/CteCapabilities"
@@ -23,13 +27,75 @@ import type { ReplicationMode } from "../types/ReplicationMode"
 import type { UpsertType } from "../types/UpsertType"
 import type { YdbDataSourceOptions } from "./YdbDataSourceOptions"
 import { YdbNotImplementedError } from "./YdbNotImplementedError"
-import type { YdbValueModules } from "./YdbParameters"
+import { isYdbValue, type YdbValueModules } from "./YdbParameters"
 import { YdbQueryRunner } from "./YdbQueryRunner"
 
 /**
  * Organizes communication with YDB.
  */
 export class YdbDriver implements Driver {
+    // -------------------------------------------------------------------------
+    // Static Properties
+    // -------------------------------------------------------------------------
+
+    /**
+     * Lower-cased type names mapped to YDB types: YDB names in any case and aliases used by other databases.
+     * Note that "string" is a byte string in YDB, text is "Utf8".
+     */
+    static readonly typeAliases: Record<string, string> = {
+        bool: "Bool",
+        boolean: "Bool",
+        int8: "Int8",
+        tinyint: "Int8",
+        int16: "Int16",
+        smallint: "Int16",
+        int2: "Int16",
+        int32: "Int32",
+        int: "Int32",
+        integer: "Int32",
+        int4: "Int32",
+        int64: "Int64",
+        bigint: "Int64",
+        uint8: "Uint8",
+        uint16: "Uint16",
+        uint32: "Uint32",
+        uint64: "Uint64",
+        float: "Float",
+        real: "Float",
+        float4: "Float",
+        double: "Double",
+        "double precision": "Double",
+        float8: "Double",
+        decimal: "Decimal",
+        numeric: "Decimal",
+        utf8: "Utf8",
+        text: "Utf8",
+        varchar: "Utf8",
+        "character varying": "Utf8",
+        char: "Utf8",
+        character: "Utf8",
+        nvarchar: "Utf8",
+        "simple-array": "Utf8",
+        "simple-json": "Utf8",
+        "simple-enum": "Utf8",
+        enum: "Utf8",
+        string: "String",
+        bytes: "String",
+        blob: "String",
+        binary: "String",
+        varbinary: "String",
+        bytea: "String",
+        json: "Json",
+        jsondocument: "JsonDocument",
+        jsonb: "JsonDocument",
+        uuid: "Uuid",
+        date: "Date",
+        datetime: "Datetime",
+        timestamp: "Timestamp",
+        timestamptz: "Timestamp",
+        interval: "Interval",
+    }
+
     // -------------------------------------------------------------------------
     // Public Properties
     // -------------------------------------------------------------------------
@@ -119,8 +185,33 @@ export class YdbDriver implements Driver {
 
     /**
      * Gets list of supported column data types by a driver.
+     *
+     * Decimal, Interval and the wide date types (Date32, Datetime64, Timestamp64, Interval64)
+     * are not supported yet: the YDB SDK cannot encode or decode them.
+     *
+     * @see https://ydb.tech/docs/en/yql/reference/types/primitive
      */
-    supportedDataTypes: ColumnType[] = []
+    supportedDataTypes: ColumnType[] = [
+        "Bool",
+        "Int8",
+        "Int16",
+        "Int32",
+        "Int64",
+        "Uint8",
+        "Uint16",
+        "Uint32",
+        "Uint64",
+        "Float",
+        "Double",
+        "Utf8",
+        "String",
+        "Json",
+        "JsonDocument",
+        "Uuid",
+        "Date",
+        "Datetime",
+        "Timestamp",
+    ]
 
     /**
      * Returns type of upsert supported by driver if any
@@ -139,8 +230,9 @@ export class YdbDriver implements Driver {
 
     /**
      * Gets list of column data types that support length by a driver.
+     * YDB strings have no length: it is accepted for portability and ignored.
      */
-    withLengthColumnTypes: ColumnType[] = []
+    withLengthColumnTypes: ColumnType[] = ["Utf8", "String"]
 
     /**
      * Gets list of column data types that support precision by a driver.
@@ -157,29 +249,29 @@ export class YdbDriver implements Driver {
      * Column types are driver dependant.
      */
     mappedDataTypes: MappedColumnTypes = {
-        createDate: "timestamp",
+        createDate: "Timestamp",
         createDateDefault: "",
-        updateDate: "timestamp",
+        updateDate: "Timestamp",
         updateDateDefault: "",
-        deleteDate: "timestamp",
+        deleteDate: "Timestamp",
         deleteDateNullable: true,
-        version: "int64",
-        treeLevel: "int64",
-        migrationId: "int64",
-        migrationName: "text",
-        migrationTimestamp: "int64",
-        cacheId: "text",
-        cacheIdentifier: "text",
-        cacheTime: "int64",
-        cacheDuration: "int64",
-        cacheQuery: "text",
-        cacheResult: "text",
-        metadataType: "text",
-        metadataDatabase: "text",
-        metadataSchema: "text",
-        metadataTable: "text",
-        metadataName: "text",
-        metadataValue: "text",
+        version: "Int32",
+        treeLevel: "Int32",
+        migrationId: "Int32",
+        migrationName: "Utf8",
+        migrationTimestamp: "Int64",
+        cacheId: "Int32",
+        cacheIdentifier: "Utf8",
+        cacheTime: "Int64",
+        cacheDuration: "Int32",
+        cacheQuery: "Utf8",
+        cacheResult: "Utf8",
+        metadataType: "Utf8",
+        metadataDatabase: "Utf8",
+        metadataSchema: "Utf8",
+        metadataTable: "Utf8",
+        metadataName: "Utf8",
+        metadataValue: "Utf8",
     }
 
     /**
@@ -442,51 +534,187 @@ export class YdbDriver implements Driver {
 
     /**
      * Prepares given value to a value to be persisted, based on its column type and metadata.
+     * Returns a typed YDB value, so the parameter type matches the column type.
+     *
+     * @param value
+     * @param columnMetadata
      */
-    preparePersistentValue(): any {
-        throw new YdbNotImplementedError("preparePersistentValue")
+    preparePersistentValue(value: any, columnMetadata: ColumnMetadata): any {
+        if (columnMetadata.transformer)
+            value = ApplyValueTransformers.transformTo(
+                columnMetadata.transformer,
+                value,
+            )
+
+        return this.toColumnValue(value, columnMetadata)
     }
 
     /**
      * Prepares given value to a value to be hydrated, based on its column type or metadata.
+     *
+     * @param value
+     * @param columnMetadata
      */
-    prepareHydratedValue(): any {
-        throw new YdbNotImplementedError("prepareHydratedValue")
+    prepareHydratedValue(value: any, columnMetadata: ColumnMetadata): any {
+        if (value === null || value === undefined)
+            return columnMetadata.transformer
+                ? ApplyValueTransformers.transformFrom(
+                      columnMetadata.transformer,
+                      value,
+                  )
+                : value
+
+        if (columnMetadata.type === "simple-array") {
+            value = DateUtils.stringToSimpleArray(value)
+        } else if (columnMetadata.type === "simple-json") {
+            value = DateUtils.stringToSimpleJson(value)
+        } else {
+            switch (this.normalizeType(columnMetadata)) {
+                case "Int64":
+                case "Uint64":
+                    value = String(value)
+                    break
+                case "Date":
+                    value = DateUtils.mixedDateToDateString(value, {
+                        utc: true,
+                    })
+                    break
+                case "String":
+                    value = Buffer.from(value)
+                    break
+            }
+        }
+
+        if (columnMetadata.transformer)
+            value = ApplyValueTransformers.transformFrom(
+                columnMetadata.transformer,
+                value,
+            )
+
+        return value
+    }
+
+    /**
+     * Wraps values of a find options "where" condition into typed YDB values
+     * based on the column type, including values inside find operators.
+     * Without it YDB would not compare, e.g., an Int64 column with a string value.
+     *
+     * @param column
+     * @param value
+     */
+    parametrizeValues(column: ColumnMetadata, value: any): any {
+        if (value instanceof FindOperator) {
+            if (value.type !== "raw") {
+                value.transformValue({
+                    to: (v) => this.parametrizeValues(column, v),
+                    from: (v) => v,
+                })
+            }
+
+            return value
+        }
+
+        if (Array.isArray(value)) {
+            return value.map((v) => this.parametrizeValues(column, v))
+        }
+
+        return this.toColumnValue(value, column)
     }
 
     /**
      * Creates a database type from a given column metadata.
+     * Type names are case-insensitive like in YQL, common aliases of other databases are accepted.
+     *
+     * @param column
+     * @param column.type
+     * @param column.length
+     * @param column.precision
+     * @param column.scale
      */
-    normalizeType(): string {
-        throw new YdbNotImplementedError("normalizeType")
+    normalizeType(column: {
+        type?: ColumnType | string
+        length?: number | string
+        precision?: number | null
+        scale?: number
+    }): string {
+        const type = column.type
+
+        if (type === Number) return "Int32"
+        if (type === String) return "Utf8"
+        if (type === Boolean) return "Bool"
+        if (type === Date) return "Timestamp"
+        if (
+            typeof type === "function" &&
+            ((type as Function) === Uint8Array ||
+                type.prototype instanceof Uint8Array)
+        )
+            return "String"
+
+        if (typeof type !== "string") return ""
+
+        return YdbDriver.typeAliases[type.toLowerCase()] ?? type
     }
 
     /**
      * Normalizes "default" value of the column.
+     *
+     * @param columnMetadata
      */
-    normalizeDefault(): string | undefined {
-        throw new YdbNotImplementedError("normalizeDefault")
+    normalizeDefault(columnMetadata: ColumnMetadata): string | undefined {
+        const defaultValue = columnMetadata.default
+
+        if (defaultValue === null || defaultValue === undefined) {
+            return undefined
+        }
+
+        if (
+            typeof defaultValue === "number" ||
+            typeof defaultValue === "boolean"
+        ) {
+            return `${defaultValue}`
+        }
+
+        if (typeof defaultValue === "function") {
+            return defaultValue()
+        }
+
+        if (typeof defaultValue === "string") {
+            return `'${defaultValue.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`
+        }
+
+        return `'${JSON.stringify(defaultValue)}'`
     }
 
     /**
      * Normalizes "isUnique" value of the column.
+     *
+     * @param column
      */
-    normalizeIsUnique(): boolean {
-        throw new YdbNotImplementedError("normalizeIsUnique")
+    normalizeIsUnique(column: ColumnMetadata): boolean {
+        return column.entityMetadata.indices.some(
+            (idx) =>
+                idx.isUnique &&
+                idx.columns.length === 1 &&
+                idx.columns[0] === column,
+        )
     }
 
     /**
      * Returns default column lengths, which is required on column creation.
+     * YDB types have no length.
      */
     getColumnLength(): string {
-        throw new YdbNotImplementedError("getColumnLength")
+        return ""
     }
 
     /**
-     * Creates column type definition including length, precision and scale
+     * Creates column type definition including length, precision and scale.
+     * Length is not a part of YDB types, so it is omitted.
+     *
+     * @param column
      */
-    createFullType(): string {
-        throw new YdbNotImplementedError("createFullType")
+    createFullType(column: TableColumn): string {
+        return column.type
     }
 
     /**
@@ -556,6 +784,108 @@ export class YdbDriver implements Driver {
     // -------------------------------------------------------------------------
     // Protected Methods
     // -------------------------------------------------------------------------
+
+    /**
+     * Converts a value into a typed YDB value of the column type.
+     * Null and undefined are returned as is: they are inlined into the query as NULL.
+     *
+     * @param value
+     * @param column
+     */
+    protected toColumnValue(value: any, column: ColumnMetadata): any {
+        if (value === null || value === undefined) return value
+
+        const { primitive } = this.ydbValueModules
+
+        if (column.type === "simple-array")
+            return new primitive.Text(DateUtils.simpleArrayToString(value))
+        if (column.type === "simple-json")
+            return new primitive.Text(DateUtils.simpleJsonToString(value))
+
+        if (isYdbValue(value)) return value
+
+        const type = this.normalizeType(column)
+        switch (type) {
+            case "Bool":
+                return new primitive.Bool(
+                    typeof value === "string"
+                        ? value === "true" || value === "1"
+                        : Boolean(value),
+                )
+            case "Int8":
+            case "Int16":
+            case "Int32":
+            case "Uint8":
+            case "Uint16":
+            case "Uint32": {
+                const number = Number(value)
+                if (!Number.isInteger(number)) {
+                    throw new TypeORMError(
+                        `YDB: value "${value}" of column "${column.propertyPath}" is not an integer.`,
+                    )
+                }
+                return new primitive[type](number)
+            }
+            case "Int64":
+            case "Uint64":
+                return new primitive[type](BigInt(value))
+            case "Float":
+            case "Double":
+                return new primitive[type](Number(value))
+            case "Utf8":
+                return new primitive.Text(String(value))
+            case "String":
+                return new primitive.Bytes(
+                    value instanceof Uint8Array
+                        ? value
+                        : Buffer.from(String(value)),
+                )
+            case "Json":
+            case "JsonDocument":
+                return new primitive[type](JSON.stringify(value))
+            case "Uuid":
+                return new primitive.Uuid(String(value))
+            case "Date":
+                return new primitive.Date(this.toUtcDay(value, column.utc))
+            case "Datetime":
+            case "Timestamp":
+                return new primitive[type](DateUtils.mixedDateToDate(value))
+        }
+
+        return value
+    }
+
+    /**
+     * Converts a date into midnight UTC of the same calendar day.
+     * YDB counts Date values as days since the epoch in UTC.
+     *
+     * @param value date object or "YYYY-MM-DD" string
+     * @param utc take the calendar day of a date object in UTC instead of local time
+     */
+    protected toUtcDay(value: Date | string, utc: boolean): Date {
+        if (typeof value === "string") {
+            const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+            if (match)
+                return new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]))
+            value = DateUtils.mixedDateToDate(value)
+        }
+
+        return utc
+            ? new Date(
+                  Date.UTC(
+                      value.getUTCFullYear(),
+                      value.getUTCMonth(),
+                      value.getUTCDate(),
+                  ),
+              )
+            : new Date(
+                  Date.UTC(
+                      value.getFullYear(),
+                      value.getMonth(),
+                      value.getDate(),
+                  ),
+              )
+    }
 
     /**
      * Checks that the database is addressed in exactly one way.

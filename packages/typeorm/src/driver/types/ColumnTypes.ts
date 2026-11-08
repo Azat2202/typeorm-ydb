@@ -56,6 +56,8 @@ export type WithPrecisionColumnType =
  * Column types where column length is used.
  */
 export type WithLengthColumnType =
+    | "Utf8" // ydb
+    | "String" // ydb
     | "character varying" // postgres, cockroachdb
     | "varying character" // sqlite
     | "char varying" // cockroachdb
@@ -214,6 +216,24 @@ export type SimpleColumnType =
     | "array" // cockroachdb, sap, spanner
     | "cube" // postgres
     | "ltree" // postgres
+    | "Bool" // ydb
+    | "Int8" // ydb
+    | "Int16" // ydb
+    | "Int32" // ydb
+    | "Int64" // ydb
+    | "Uint8" // ydb
+    | "Uint16" // ydb
+    | "Uint32" // ydb
+    | "Uint64" // ydb
+    | "Float" // ydb
+    | "Double" // ydb
+    | "Text" // ydb
+    | "Json" // ydb
+    | "JsonDocument" // ydb
+    | "Uuid" // ydb
+    | "Date" // ydb
+    | "Datetime" // ydb
+    | "Timestamp" // ydb
 
 /**
  * Any column type column can be.
